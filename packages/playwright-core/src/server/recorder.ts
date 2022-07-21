@@ -74,7 +74,7 @@ export class Recorder implements InstrumentationListener, IRecorder {
   private static async _create(context: BrowserContext, recorderAppFactory: IRecorderAppFactory, params: channels.BrowserContextEnableRecorderParams = {}): Promise<Recorder> {
     const recorder = new Recorder(context, params);
     const recorderApp = await recorderAppFactory(recorder);
-    await recorder._install(recorderApp);
+    await recorder.install(recorderApp, Boolean(params.showRecorder));
     return recorder;
   }
 
@@ -145,6 +145,12 @@ export class Recorder implements InstrumentationListener, IRecorder {
       this._pushAllSources()
     ]);
 
+    (this._context as any).recorderAppForTest = this._recorderApp;
+  }
+
+  async install(recorderApp: IRecorderApp,showRecorder: Boolean) {
+  if (showRecorder)
+    await this._install(recorderApp);
     this._context.once(BrowserContext.Events.Close, () => {
       this._contextRecorder.dispose();
       this._context.instrumentation.removeListener(this);
@@ -188,6 +194,21 @@ export class Recorder implements InstrumentationListener, IRecorder {
       await this._recorderApp?.elementPicked({ selector: buildFullSelector(selectorChain, elementInfo.selector), ariaSnapshot: elementInfo.ariaSnapshot }, true);
     });
 
+    // Not sure if this is needed
+    await this._context.exposeBinding('__pw_recorderSetSelector', false, async ({ frame }, selector: string) => {
+      const selectorPromises: Promise<string | undefined>[] = [];
+      let currentFrame: Frame | null = frame;
+      while (currentFrame) {
+        selectorPromises.push(findFrameSelector(currentFrame));
+        currentFrame = currentFrame.parentFrame();
+      }
+      const fullSelector = (await Promise.all(selectorPromises)).filter(Boolean);
+      fullSelector.push(selector);
+      // TODO: validate if this is actually needed
+      // this._contextRecorder.emitSelector(selector);
+      // await this._recorderApp?.setSelector(fullSelector.join(' >> internal:control=enter-frame >> '), true);
+    });
+
     await this._context.exposeBinding('__pw_recorderSetMode', false, async ({ frame }, mode: Mode) => {
       if (frame.parentFrame())
         return;
@@ -200,6 +221,11 @@ export class Recorder implements InstrumentationListener, IRecorder {
       this._overlayState = state;
     });
 
+    // added for synthetics
+    await this._context.exposeBinding('__pw_setMode', false, async  (_, mode: Mode) => {
+      this.setMode(mode);
+    });
+
     await this._context.exposeBinding('__pw_resume', false, () => {
       this._debugger.resume(false);
     });
@@ -208,8 +234,6 @@ export class Recorder implements InstrumentationListener, IRecorder {
     if (this._debugger.isPaused())
       this._pausedStateChanged();
     this._debugger.on(Debugger.Events.PausedStateChanged, () => this._pausedStateChanged());
-
-    (this._context as any).recorderAppForTest = this._recorderApp;
   }
 
   _pausedStateChanged() {
@@ -388,10 +412,6 @@ export class Recorder implements InstrumentationListener, IRecorder {
   }
 }
 
-function isScreenshotCommand(metadata: CallMetadata) {
-  return metadata.method.toLowerCase().includes('screenshot');
-}
-
 function languageForFile(file: string) {
   if (file.endsWith('.py'))
     return 'python';
@@ -400,4 +420,24 @@ function languageForFile(file: string) {
   if (file.endsWith('.cs'))
     return 'csharp';
   return 'javascript';
+}
+
+function isScreenshotCommand(metadata: CallMetadata) {
+  return metadata.method.toLowerCase().includes('screenshot');
+}
+
+async function findFrameSelector(frame: Frame): Promise<string | undefined> {
+  try {
+    const parent = frame.parentFrame();
+    const frameElement = await frame.frameElement();
+    if (!frameElement || !parent)
+      return;
+    const utility = await parent._utilityContext();
+    const injected = await utility.injectedScript();
+    const selector = await injected.evaluate((injected, element) => {
+      return injected.generateSelectorSimple(element as Element, { testIdAttributeName: '', omitInternalEngines: true });
+    }, frameElement);
+    return selector;
+  } catch (e) {
+  }
 }
