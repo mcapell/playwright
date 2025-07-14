@@ -33,6 +33,7 @@
     "./lib/server/registry/index": "./lib/server/registry/index.js",
     "./lib/utils": "./lib/utils.js",
     "./lib/server/recorder/javascript": "./lib/server/recorder/javascript.js",
+    "./lib/server/codegen/javascript": "./lib/server/codegen/javascript.js",
     "./lib/utilsBundle": "./lib/utilsBundle.js",
     "./lib/zipBundle": "./lib/zipBundle.js",
     "./types/protocol": "./types/protocol.d.ts",
